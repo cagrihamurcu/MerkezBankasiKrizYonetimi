@@ -1,3 +1,8 @@
+import time
+from typing import Dict, Any, List
+
+import matplotlib.pyplot as plt
+import pandas as pd
 import streamlit as st
 
 st.set_page_config(
@@ -6,412 +11,583 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# Yardımcı fonksiyonlar
+# OYUN VERİLERİ
+# --------------------------------------------------
+ROUNDS: Dict[int, Dict[str, Any]] = {
+    1: {
+        "title": "Tur 1: Rezerv Kaybı ve CDS Şoku",
+        "scenario": (
+            "TCMB rezervleri 15 milyar $ düştü. CDS yükseldi. "
+            "Piyasalarda güven zayıf, kur üzerinde baskı var."
+        ),
+        "options": {
+            "A": "Faizi düşür",
+            "B": "Faizi artır",
+            "C": "Rezerv sat",
+            "D": "Hiçbir şey yapma",
+        },
+        "results": {
+            "A": {
+                "title": "Faiz indirildi",
+                "summary": (
+                    "Piyasa bu kararı zamansız gevşeme olarak gördü. "
+                    "CDS yükseldi, kur baskısı arttı, güven geriledi."
+                ),
+                "score": -25,
+                "effects": {"CDS": 70, "Güven": -10, "Kur Baskısı": 12},
+            },
+            "B": {
+                "title": "Faiz artırıldı",
+                "summary": (
+                    "Sıkılaşma mesajı verildi. Kur baskısı azaldı, güven toparlandı, "
+                    "CDS'te kısmi düşüş görüldü."
+                ),
+                "score": 20,
+                "effects": {"CDS": -20, "Güven": 8, "Kur Baskısı": -12, "Enflasyon": -1},
+            },
+            "C": {
+                "title": "Rezerv satıldı",
+                "summary": (
+                    "Kısa vadede kur baskısı hafifledi; ancak rezerv kaybı nedeniyle "
+                    "piyasa bunu kalıcı çözüm olarak görmedi."
+                ),
+                "score": -5,
+                "effects": {"Rezerv": -5, "CDS": 15, "Güven": -3, "Kur Baskısı": -8},
+            },
+            "D": {
+                "title": "Politika tepkisi verilmedi",
+                "summary": (
+                    "Hareketsizlik belirsizliği artırdı. Piyasa bunu zayıf yönetim işareti olarak değerlendirdi."
+                ),
+                "score": -20,
+                "effects": {"CDS": 50, "Güven": -8, "Kur Baskısı": 8},
+            },
+        },
+    },
+    2: {
+        "title": "Tur 2: Kur Şoku Derinleşiyor",
+        "scenario": (
+            "Kur hızlı yükseliyor. İthalat maliyetleri artıyor. "
+            "Enflasyon beklentileri bozuluyor."
+        ),
+        "options": {
+            "A": "Faiz artır + iletişimi güçlendir",
+            "B": "Faiz indir + rezerv sat",
+            "C": "Sadece rezerv sat",
+            "D": "Faiz artır ama iletişimi zayıf bırak",
+        },
+        "results": {
+            "A": {
+                "title": "Faiz artırıldı, iletişim güçlendirildi",
+                "summary": (
+                    "Sıkılaşma ve güçlü iletişim birlikte kullanıldı. "
+                    "Güven arttı, CDS geriledi, kur baskısı azaldı."
+                ),
+                "score": 35,
+                "effects": {"CDS": -60, "Güven": 18, "Kur Baskısı": -18, "Enflasyon": -2},
+            },
+            "B": {
+                "title": "Faiz indirildi, rezerv satıldı",
+                "summary": (
+                    "Piyasa bu yaklaşımı çelişkili buldu. Rezerv satışı kısa süreli etki yaratsa da "
+                    "faiz indirimi risk algısını bozdu."
+                ),
+                "score": -35,
+                "effects": {"Rezerv": -8, "CDS": 80, "Güven": -15, "Kur Baskısı": 12},
+            },
+            "C": {
+                "title": "Sadece rezerv satıldı",
+                "summary": (
+                    "Geçici rahatlama sağlandı; ancak yapısal güven oluşturulamadı."
+                ),
+                "score": -10,
+                "effects": {"Rezerv": -7, "CDS": 10, "Güven": -4, "Kur Baskısı": -10},
+            },
+            "D": {
+                "title": "Faiz artırıldı ama iletişim zayıf kaldı",
+                "summary": (
+                    "Teknik olarak doğru yönde adım atıldı; ancak güven etkisi sınırlı kaldı."
+                ),
+                "score": 10,
+                "effects": {"CDS": -20, "Güven": 4, "Kur Baskısı": -8, "Enflasyon": -1},
+            },
+        },
+    },
+    3: {
+        "title": "Tur 3: Enflasyon Beklentileri Bozuluyor",
+        "scenario": (
+            "Piyasa gelecek dönemde daha yüksek enflasyon bekliyor. "
+            "Kredi büyümesi hâlâ güçlü."
+        ),
+        "options": {
+            "A": "Zorunlu karşılık oranını artır",
+            "B": "Faizi indirerek büyümeyi destekle",
+            "C": "Likiditeyi artır",
+            "D": "Sorunu görmezden gel",
+        },
+        "results": {
+            "A": {
+                "title": "Zorunlu karşılık artırıldı",
+                "summary": (
+                    "Kredi verme kapasitesi sınırlandı. Kredi genişlemesi yavaşladı, "
+                    "enflasyon baskısı azaldı."
+                ),
+                "score": 20,
+                "effects": {"Enflasyon": -2, "Güven": 5, "Kur Baskısı": -4},
+            },
+            "B": {
+                "title": "Faiz indirildi",
+                "summary": (
+                    "Piyasa bunu zamansız gevşeme olarak gördü. "
+                    "Enflasyon beklentileri daha da bozuldu."
+                ),
+                "score": -20,
+                "effects": {"Enflasyon": 3, "CDS": 25, "Güven": -8, "Kur Baskısı": 6},
+            },
+            "C": {
+                "title": "Likidite artırıldı",
+                "summary": (
+                    "Sisteme likidite verildi; ancak bu karar enflasyonist baskıları güçlendirdi."
+                ),
+                "score": -15,
+                "effects": {"Enflasyon": 2, "CDS": 15, "Güven": -5},
+            },
+            "D": {
+                "title": "Tepki verilmedi",
+                "summary": (
+                    "Beklentiler bozulurken hareketsiz kalınması güven kaybına yol açtı."
+                ),
+                "score": -18,
+                "effects": {"Enflasyon": 2, "CDS": 20, "Güven": -6, "Kur Baskısı": 5},
+            },
+        },
+    },
+    4: {
+        "title": "Tur 4: Büyüme Yavaşlıyor",
+        "scenario": (
+            "Sıkılaşma sonrası büyüme ivme kaybetti. İş dünyası daha düşük finansman maliyeti talep ediyor."
+        ),
+        "options": {
+            "A": "Faizi sert artır",
+            "B": "Faizi dikkatli indir + iletişimi güçlendir",
+            "C": "Rezerv sat",
+            "D": "CDS'i yok say, sadece büyümeye odaklan",
+        },
+        "results": {
+            "A": {
+                "title": "Faiz sert artırıldı",
+                "summary": (
+                    "Enflasyon açısından güçlü sinyal verildi; ancak büyüme üzerindeki baskı arttı."
+                ),
+                "score": 5,
+                "effects": {"CDS": -10, "Güven": 2, "Enflasyon": -2, "Büyüme": -2},
+            },
+            "B": {
+                "title": "Faiz dikkatli indirildi, iletişim güçlendirildi",
+                "summary": (
+                    "Temkinli gevşeme ile büyüme desteklenmeye çalışıldı. "
+                    "Güven kaybı sınırlı tutuldu."
+                ),
+                "score": 18,
+                "effects": {"Büyüme": 3, "Güven": 8, "CDS": -5, "Kur Baskısı": 2},
+            },
+            "C": {
+                "title": "Rezerv satıldı",
+                "summary": (
+                    "Rezerv satışı büyüme sorununu çözmedi, kırılganlığı artırdı."
+                ),
+                "score": -12,
+                "effects": {"Rezerv": -6, "CDS": 10, "Güven": -4},
+            },
+            "D": {
+                "title": "Risk göz ardı edildi",
+                "summary": (
+                    "Piyasa risk algısı dikkate alınmadı. Güven bozuldu, finansal koşullar kötüleşti."
+                ),
+                "score": -20,
+                "effects": {"CDS": 30, "Güven": -10, "Kur Baskısı": 6, "Büyüme": 1},
+            },
+        },
+    },
+    5: {
+        "title": "Tur 5: Küresel Finansal Şok",
+        "scenario": (
+            "Küresel risk iştahı düştü. Sermaye çıkışları hızlandı. "
+            "İçeride kırılganlık sürüyor."
+        ),
+        "options": {
+            "A": "Faiz artır + likiditeyi sıkılaştır + güçlü iletişim",
+            "B": "Faiz indir + büyüme vurgusu yap",
+            "C": "Sadece rezerv kullan",
+            "D": "Bekle-gör politikası uygula",
+        },
+        "results": {
+            "A": {
+                "title": "Kapsamlı sıkılaşma ve güçlü iletişim",
+                "summary": (
+                    "Çok araçlı politika yaklaşımı kullanıldı. Güven güçlendi, CDS geriledi, kur baskısı azaldı."
+                ),
+                "score": 40,
+                "effects": {"CDS": -50, "Güven": 20, "Kur Baskısı": -20, "Enflasyon": -1},
+            },
+            "B": {
+                "title": "Faiz indirildi, büyüme öne çıkarıldı",
+                "summary": (
+                    "Küresel şok ortamında bu karar riskli bulundu. CDS sıçradı, güven sert düştü."
+                ),
+                "score": -30,
+                "effects": {"CDS": 60, "Güven": -15, "Kur Baskısı": 15, "Büyüme": 1},
+            },
+            "C": {
+                "title": "Sadece rezerv kullanıldı",
+                "summary": (
+                    "Kısa vadeli savunma sağlandı; ancak rezerv kaybı nedeniyle sürdürülebilirlik sorgulandı."
+                ),
+                "score": -10,
+                "effects": {"Rezerv": -10, "CDS": 15, "Güven": -5, "Kur Baskısı": -6},
+            },
+            "D": {
+                "title": "Bekle-gör yaklaşımı",
+                "summary": (
+                    "Pasif kalınması piyasa güvenini zayıflattı. Risk primi yükseldi."
+                ),
+                "score": -18,
+                "effects": {"CDS": 25, "Güven": -8, "Kur Baskısı": 8},
+            },
+        },
+    },
+}
+
+WAIT_SECONDS = 60
+
+# --------------------------------------------------
+# STATE
 # --------------------------------------------------
 def init_state() -> None:
-    if "step" not in st.session_state:
-        st.session_state.step = 1
-
+    if "round" not in st.session_state:
+        st.session_state.round = 1
     if "score" not in st.session_state:
         st.session_state.score = 0
-
     if "history" not in st.session_state:
         st.session_state.history = []
-
     if "metrics" not in st.session_state:
         st.session_state.metrics = {
-            "Rezerv Değişimi (Milyar $)": -15,
+            "Rezerv": 100,
             "CDS": 600,
-            "Enflasyon (%)": 45,
-            "Güven Düzeyi": 35,  # 0-100
-            "Kur Baskısı": 80,   # 0-100
+            "Enflasyon": 45,
+            "Güven": 35,
+            "Kur Baskısı": 80,
+            "Büyüme": 2,
         }
-
-    if "round1_choice" not in st.session_state:
-        st.session_state.round1_choice = None
-
-    if "round2_choice" not in st.session_state:
-        st.session_state.round2_choice = None
+    if "waiting" not in st.session_state:
+        st.session_state.waiting = False
+    if "wait_until" not in st.session_state:
+        st.session_state.wait_until = None
+    if "last_result" not in st.session_state:
+        st.session_state.last_result = None
+    if "processed_round" not in st.session_state:
+        st.session_state.processed_round = 0
 
 
 def reset_game() -> None:
-    for key in [
-        "step",
-        "score",
-        "history",
-        "metrics",
-        "round1_choice",
-        "round2_choice",
-    ]:
-        if key in st.session_state:
-            del st.session_state[key]
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
     init_state()
 
 
-def apply_round1(choice: str) -> dict:
-    """
-    1. tur kararının etkilerini uygular.
-    """
+def clamp_metrics() -> None:
+    m = st.session_state.metrics
+    m["Güven"] = max(0, min(100, m["Güven"]))
+    m["Kur Baskısı"] = max(0, min(100, m["Kur Baskısı"]))
+    m["CDS"] = max(100, m["CDS"])
+    m["Rezerv"] = max(0, m["Rezerv"])
+
+
+def apply_choice(round_no: int, choice_key: str) -> Dict[str, Any]:
+    result = ROUNDS[round_no]["results"][choice_key]
+    effects = result["effects"]
     metrics = st.session_state.metrics.copy()
-    result = {
-        "title": "",
-        "summary": "",
-        "score_delta": 0,
-        "effects": {},
-    }
 
-    if choice == "A":
-        # Faizi düşür
-        result["title"] = "Faiz indirildi"
-        result["summary"] = (
-            "Faiz indirimi, mevcut kırılgan ortamda piyasa tarafından "
-            "gevşeme sinyali olarak algılandı. CDS yükseldi, kur baskısı arttı, "
-            "güven zayıfladı."
-        )
-        result["score_delta"] = -25
-        result["effects"] = {
-            "CDS": +70,
-            "Güven Düzeyi": -10,
-            "Kur Baskısı": +10,
-        }
+    before = metrics.copy()
 
-    elif choice == "B":
-        # Faizi artır
-        result["title"] = "Faiz artırıldı"
-        result["summary"] = (
-            "Faiz artışı piyasalara sıkılaşma mesajı verdi. Kur baskısı azaldı, "
-            "güven bir miktar toparlandı. Ancak tek başına CDS üzerinde sınırlı etki yaptı."
-        )
-        result["score_delta"] = 20
-        result["effects"] = {
-            "CDS": -20,
-            "Güven Düzeyi": +8,
-            "Kur Baskısı": -12,
-        }
-
-    elif choice == "C":
-        # Rezerv sat
-        result["title"] = "Rezerv satıldı"
-        result["summary"] = (
-            "Rezerv satışı kısa vadede kur baskısını hafifletti. Ancak rezerv kaybı "
-            "sürdürülebilir bulunmadığı için güven sınırlı kaldı ve risk algısı tam düzelmedi."
-        )
-        result["score_delta"] = -5
-        result["effects"] = {
-            "Rezerv Değişimi (Milyar $)": -5,
-            "CDS": +15,
-            "Güven Düzeyi": -3,
-            "Kur Baskısı": -8,
-        }
-
-    elif choice == "D":
-        # Hiçbir şey yapma
-        result["title"] = "Hiçbir adım atılmadı"
-        result["summary"] = (
-            "Politika tepkisi verilmemesi, belirsizliği artırdı. Piyasa bunu zayıf bir sinyal "
-            "olarak gördü; CDS yükseldi ve güven geriledi."
-        )
-        result["score_delta"] = -20
-        result["effects"] = {
-            "CDS": +50,
-            "Güven Düzeyi": -8,
-            "Kur Baskısı": +8,
-        }
-
-    # Etkileri uygula
-    for key, delta in result["effects"].items():
+    for key, delta in effects.items():
         metrics[key] += delta
 
-    # Sınırlandırmalar
-    metrics["Güven Düzeyi"] = max(0, min(100, metrics["Güven Düzeyi"]))
-    metrics["Kur Baskısı"] = max(0, min(100, metrics["Kur Baskısı"]))
-
     st.session_state.metrics = metrics
-    st.session_state.score += result["score_delta"]
-    st.session_state.history.append(
-        {
-            "tur": 1,
-            "karar": choice,
-            "başlık": result["title"],
-            "özet": result["summary"],
-            "puan": result["score_delta"],
-            "metrikler": metrics.copy(),
-        }
-    )
-    return result
+    clamp_metrics()
+    st.session_state.score += result["score"]
 
+    after = st.session_state.metrics.copy()
 
-def apply_round2(choice: str) -> dict:
-    """
-    2. tur kombinasyon kararının etkilerini uygular.
-    """
-    metrics = st.session_state.metrics.copy()
-    result = {
-        "title": "",
-        "summary": "",
-        "score_delta": 0,
-        "effects": {},
+    history_item = {
+        "Tur": round_no,
+        "Karar": choice_key,
+        "Başlık": result["title"],
+        "Açıklama": result["summary"],
+        "Puan Etkisi": result["score"],
+        "Önce": before,
+        "Sonra": after,
     }
-
-    if choice == "A":
-        # Faiz artır + iletişim güçlendir
-        result["title"] = "Faiz artırıldı ve iletişim güçlendirildi"
-        result["summary"] = (
-            "Bu kombinasyon en güçlü politika tepkisi oldu. Sıkılaşma kararı, "
-            "şeffaf iletişimle desteklendiği için güven arttı, CDS geriledi, kur baskısı azaldı."
-        )
-        result["score_delta"] = 35
-        result["effects"] = {
-            "CDS": -60,
-            "Güven Düzeyi": +18,
-            "Kur Baskısı": -18,
-        }
-
-    elif choice == "B":
-        # Faiz indir + rezerv sat
-        result["title"] = "Faiz indirildi, rezerv satıldı"
-        result["summary"] = (
-            "Bu politika bileşimi piyasa açısından çelişkili ve zayıf bulundu. "
-            "Rezerv satışı geçici rahatlama sağlasa da faiz indirimi risk algısını bozdu. "
-            "CDS yükseldi, güven geriledi."
-        )
-        result["score_delta"] = -35
-        result["effects"] = {
-            "Rezerv Değişimi (Milyar $)": -8,
-            "CDS": +80,
-            "Güven Düzeyi": -15,
-            "Kur Baskısı": +12,
-        }
-
-    elif choice == "C":
-        # Sadece rezerv sat
-        result["title"] = "Sadece rezerv satıldı"
-        result["summary"] = (
-            "Rezerv satışı kısa süreli dengeleme sağladı; ancak yapısal güveni güçlendirmedi. "
-            "Bu nedenle CDS üzerinde kalıcı iyileşme oluşmadı."
-        )
-        result["score_delta"] = -10
-        result["effects"] = {
-            "Rezerv Değişimi (Milyar $)": -7,
-            "CDS": +10,
-            "Güven Düzeyi": -4,
-            "Kur Baskısı": -10,
-        }
-
-    elif choice == "D":
-        # Faiz artır ama iletişim zayıf
-        result["title"] = "Faiz artırıldı ama iletişim zayıf kaldı"
-        result["summary"] = (
-            "Teknik olarak doğru yönde bir adım atıldı; ancak iletişim eksikliği nedeniyle "
-            "politikanın güven etkisi sınırlı kaldı. CDS kısmen geriledi fakat beklenen kadar düşmedi."
-        )
-        result["score_delta"] = 10
-        result["effects"] = {
-            "CDS": -20,
-            "Güven Düzeyi": +4,
-            "Kur Baskısı": -8,
-        }
-
-    for key, delta in result["effects"].items():
-        metrics[key] += delta
-
-    metrics["Güven Düzeyi"] = max(0, min(100, metrics["Güven Düzeyi"]))
-    metrics["Kur Baskısı"] = max(0, min(100, metrics["Kur Baskısı"]))
-
-    st.session_state.metrics = metrics
-    st.session_state.score += result["score_delta"]
-    st.session_state.history.append(
-        {
-            "tur": 2,
-            "karar": choice,
-            "başlık": result["title"],
-            "özet": result["summary"],
-            "puan": result["score_delta"],
-            "metrikler": metrics.copy(),
-        }
-    )
-    return result
+    st.session_state.history.append(history_item)
+    st.session_state.last_result = history_item
+    return history_item
 
 
 def score_comment(score: int) -> str:
-    if score >= 45:
-        return "Çok başarılı politika yönetimi. Araçları birlikte kullanarak güveni ve istikrarı güçlendirdiniz."
-    if score >= 20:
-        return "Genel olarak doğru yönde adımlar attınız; ancak bazı kararlar daha güçlü iletişimle desteklenebilirdi."
+    if score >= 70:
+        return "Çok güçlü performans. Politika araçlarını birlikte kullanarak güveni ve istikrarı başarıyla yönettiniz."
+    if score >= 35:
+        return "İyi performans. Çoğu turda doğru yönde karar verdiniz, ancak bazı adımlar daha güçlü iletişimle desteklenebilirdi."
     if score >= 0:
-        return "Kısmi başarı sağlandı. Bazı kararlar kısa vadeli rahatlama yarattı ama yapısal güven üretmedi."
-    return "Politika bileşimi zayıf kaldı. Piyasa güveni ve risk primi üzerindeki etkiler yeterince yönetilemedi."
-
-
-def show_metrics(metrics: dict) -> None:
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Rezerv Değişimi", f'{metrics["Rezerv Değişimi (Milyar $)"]} milyar $')
-    col2.metric("CDS", f'{metrics["CDS"]}')
-    col3.metric("Enflasyon", f'%{metrics["Enflasyon (%)"]}')
-    col4.metric("Güven", f'{metrics["Güven Düzeyi"]}/100')
-    col5.metric("Kur Baskısı", f'{metrics["Kur Baskısı"]}/100')
+        return "Orta düzey performans. Bazı kararlar kısa vadeli rahatlama sağladı ama yapısal güven üretmekte yetersiz kaldı."
+    return "Zayıf performans. Risk primi, güven ve likidite yönetimi arasında tutarlı bir politika bileşimi kurulamadı."
 
 
 # --------------------------------------------------
-# Uygulama
+# UI YARDIMCILARI
+# --------------------------------------------------
+def show_metrics() -> None:
+    m = st.session_state.metrics
+    c1, c2, c3 = st.columns(3)
+    c4, c5, c6 = st.columns(3)
+
+    c1.metric("Rezerv", f"{m['Rezerv']} milyar $")
+    c2.metric("CDS", f"{m['CDS']}")
+    c3.metric("Enflasyon", f"%{m['Enflasyon']}")
+    c4.metric("Güven", f"{m['Güven']}/100")
+    c5.metric("Kur Baskısı", f"{m['Kur Baskısı']}/100")
+    c6.metric("Büyüme", f"%{m['Büyüme']}")
+
+
+def build_history_df() -> pd.DataFrame:
+    rows: List[Dict[str, Any]] = []
+    for item in st.session_state.history:
+        rows.append(
+            {
+                "Tur": item["Tur"],
+                "Rezerv": item["Sonra"]["Rezerv"],
+                "CDS": item["Sonra"]["CDS"],
+                "Enflasyon": item["Sonra"]["Enflasyon"],
+                "Güven": item["Sonra"]["Güven"],
+                "Kur Baskısı": item["Sonra"]["Kur Baskısı"],
+                "Büyüme": item["Sonra"]["Büyüme"],
+                "Toplam Puan": sum(x["Puan Etkisi"] for x in st.session_state.history if x["Tur"] <= item["Tur"]),
+            }
+        )
+    if not rows:
+        rows.append(
+            {
+                "Tur": 0,
+                "Rezerv": st.session_state.metrics["Rezerv"],
+                "CDS": st.session_state.metrics["CDS"],
+                "Enflasyon": st.session_state.metrics["Enflasyon"],
+                "Güven": st.session_state.metrics["Güven"],
+                "Kur Baskısı": st.session_state.metrics["Kur Baskısı"],
+                "Büyüme": st.session_state.metrics["Büyüme"],
+                "Toplam Puan": st.session_state.score,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def plot_metrics() -> None:
+    df = build_history_df()
+
+    fig1, ax1 = plt.subplots(figsize=(8, 4))
+    ax1.plot(df["Tur"], df["CDS"], marker="o", label="CDS")
+    ax1.plot(df["Tur"], df["Rezerv"], marker="o", label="Rezerv")
+    ax1.set_title("Tur Bazında CDS ve Rezerv")
+    ax1.set_xlabel("Tur")
+    ax1.set_ylabel("Seviye")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    st.pyplot(fig1)
+
+    fig2, ax2 = plt.subplots(figsize=(8, 4))
+    ax2.plot(df["Tur"], df["Enflasyon"], marker="o", label="Enflasyon")
+    ax2.plot(df["Tur"], df["Güven"], marker="o", label="Güven")
+    ax2.plot(df["Tur"], df["Kur Baskısı"], marker="o", label="Kur Baskısı")
+    ax2.set_title("Tur Bazında Enflasyon, Güven ve Kur Baskısı")
+    ax2.set_xlabel("Tur")
+    ax2.set_ylabel("Seviye")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    st.pyplot(fig2)
+
+
+def show_last_result_box() -> None:
+    item = st.session_state.last_result
+    if not item:
+        return
+
+    st.success(f"Karar uygulandı: {item['Başlık']}")
+    st.write(item["Açıklama"])
+    st.write(f"**Puan etkisi:** {item['Puan Etkisi']}")
+
+    before = item["Önce"]
+    after = item["Sonra"]
+
+    deltas = []
+    for key in ["Rezerv", "CDS", "Enflasyon", "Güven", "Kur Baskısı", "Büyüme"]:
+        change = after[key] - before[key]
+        if change != 0:
+            sign = "+" if change > 0 else ""
+            deltas.append(f"- **{key}:** {sign}{change}")
+
+    if deltas:
+        st.markdown("**Karar sonrası değişimler:**")
+        st.markdown("\n".join(deltas))
+
+
+# --------------------------------------------------
+# UYGULAMA
 # --------------------------------------------------
 init_state()
 
 st.title("🎮 Merkez Bankası Kriz Yönetimi Oyunu")
 st.markdown(
     """
-Bu oyunda rezerv düşüşü ve CDS artışı karşısında merkez bankasının nasıl tepki vereceğini seçiyorsunuz.
-Amaç, **faiz, bilanço ve güven yönetimini birlikte düşünerek** en doğru politika bileşimini oluşturmaktır.
+Bu oyunda merkez bankasının rezerv kaybı, CDS artışı, enflasyon baskısı,
+büyüme yavaşlaması ve küresel şoklar karşısında nasıl karar vereceğini seçiyorsunuz.
+
+Amaç, **faiz, bilanço, likidite ve güven yönetimini birlikte düşünerek**
+en doğru politika bileşimini oluşturmaktır.
 """
 )
 
 with st.sidebar:
-    st.header("Oyun Kontrolü")
+    st.header("Oyun Paneli")
+    current_round_display = min(st.session_state.round, 5)
+    st.write(f"**Mevcut Tur:** {current_round_display}/5")
     st.write(f"**Toplam Puan:** {st.session_state.score}")
+
     if st.button("🔄 Oyunu Sıfırla", use_container_width=True):
         reset_game()
         st.rerun()
 
-st.subheader("Başlangıç Göstergeleri")
-show_metrics(st.session_state.metrics)
+st.subheader("Güncel Göstergeler")
+show_metrics()
+
+st.divider()
+st.subheader("Grafikler")
+plot_metrics()
 
 st.divider()
 
 # --------------------------------------------------
-# TUR 1
+# BEKLEME EKRANI
 # --------------------------------------------------
-if st.session_state.step == 1:
-    st.header("1. Tur: İlk Politika Tepkisi")
-    st.markdown(
-        """
-**Senaryo:**
-- TCMB rezervleri **15 milyar $ düştü**
-- CDS **yükseldi**
-- Enflasyon yüksek
-- Piyasa güveni zayıf
+if st.session_state.waiting:
+    show_last_result_box()
 
-**Siz merkez bankasısınız. İlk adımınız ne olur?**
-"""
-    )
+    remaining = int(st.session_state.wait_until - time.time())
 
-    choice1 = st.radio(
-        "Bir seçenek seçin:",
-        options=[
-            "A) Faizi düşür",
-            "B) Faizi artır",
-            "C) Rezerv sat",
-            "D) Hiçbir şey yapma",
-        ],
+    if remaining > 0:
+        st.warning("Kararınızın piyasalarda etkilerinin görülmesi için lütfen bekleyiniz.")
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        total = WAIT_SECONDS
+        while remaining > 0:
+            elapsed = total - remaining
+            progress = int((elapsed / total) * 100)
+            progress_bar.progress(progress)
+            progress_text.markdown(f"### Sonraki tura geçiş için kalan süre: **{remaining} saniye**")
+            time.sleep(1)
+            remaining = int(st.session_state.wait_until - time.time())
+
+        progress_bar.progress(100)
+        progress_text.markdown("### Bekleme süresi tamamlandı.")
+        st.session_state.waiting = False
+        st.rerun()
+
+    else:
+        st.session_state.waiting = False
+        st.rerun()
+
+# --------------------------------------------------
+# OYUN AKIŞI
+# --------------------------------------------------
+elif st.session_state.round <= 5:
+    current_round = st.session_state.round
+    round_data = ROUNDS[current_round]
+
+    st.header(round_data["title"])
+    st.info(round_data["scenario"])
+
+    option_texts = [f"{k}) {v}" for k, v in round_data["options"].items()]
+    selected_option = st.radio(
+        "Kararınızı seçin:",
+        options=option_texts,
         index=None,
+        key=f"round_{current_round}_choice",
     )
 
-    if st.button("1. Tur Kararını Uygula", type="primary", use_container_width=True):
-        if choice1 is None:
-            st.warning("Lütfen bir seçenek seçin.")
+    if st.button("Kararı Uygula", type="primary", use_container_width=True):
+        if selected_option is None:
+            st.warning("Lütfen bir karar seçin.")
         else:
-            selected = choice1[0]  # A/B/C/D
-            st.session_state.round1_choice = selected
-            result = apply_round1(selected)
+            choice_key = selected_option[0]
 
-            st.success(f"Karar uygulandı: {result['title']}")
-            st.write(result["summary"])
-            st.write(f"**Puan etkisi:** {result['score_delta']}")
-
-            st.subheader("1. Tur Sonrası Göstergeler")
-            show_metrics(st.session_state.metrics)
-
-            st.session_state.step = 2
-            st.rerun()
-
-# --------------------------------------------------
-# TUR 2
-# --------------------------------------------------
-elif st.session_state.step == 2:
-    st.header("2. Tur: Kombinasyon Politikası")
-    st.markdown(
-        """
-İlk kararın ardından piyasa hâlâ kırılgan. Şimdi daha kapsamlı bir politika bileşimi seçmeniz gerekiyor.
-
-**Soru:** Tek bir araç yeterli mi, yoksa güven ve iletişim de sürece katılmalı mı?
-"""
-    )
-
-    if st.session_state.history:
-        st.info(
-            f"1. Tur kararınız: **{st.session_state.history[0]['başlık']}** "
-            f"(Puan: {st.session_state.history[0]['puan']})"
-        )
-
-    show_metrics(st.session_state.metrics)
-
-    choice2 = st.radio(
-        "Kombinasyon politikasını seçin:",
-        options=[
-            "A) Faiz artır + iletişimi güçlendir",
-            "B) Faiz indir + rezerv sat",
-            "C) Sadece rezerv sat",
-            "D) Faiz artır ama iletişimi zayıf bırak",
-        ],
-        index=None,
-    )
-
-    if st.button("2. Tur Kararını Uygula", type="primary", use_container_width=True):
-        if choice2 is None:
-            st.warning("Lütfen bir seçenek seçin.")
-        else:
-            selected = choice2[0]
-            st.session_state.round2_choice = selected
-            result = apply_round2(selected)
-
-            st.success(f"Karar uygulandı: {result['title']}")
-            st.write(result["summary"])
-            st.write(f"**Puan etkisi:** {result['score_delta']}")
-
-            st.subheader("2. Tur Sonrası Göstergeler")
-            show_metrics(st.session_state.metrics)
-
-            st.session_state.step = 3
-            st.rerun()
+            # Aynı turun tekrar işlenmesini engelle
+            if st.session_state.processed_round < current_round:
+                apply_choice(current_round, choice_key)
+                st.session_state.processed_round = current_round
+                st.session_state.waiting = True
+                st.session_state.wait_until = time.time() + WAIT_SECONDS
+                st.session_state.round += 1
+                st.rerun()
 
 # --------------------------------------------------
 # SONUÇ EKRANI
 # --------------------------------------------------
-elif st.session_state.step == 3:
-    st.header("🏁 Oyun Sonucu")
-    st.subheader(f"Toplam Puan: {st.session_state.score}")
+else:
+    if st.session_state.last_result:
+        show_last_result_box()
 
+    st.header("🏁 Oyun Tamamlandı")
+    st.subheader(f"Toplam Puan: {st.session_state.score}")
     st.success(score_comment(st.session_state.score))
 
     st.subheader("Final Göstergeler")
-    show_metrics(st.session_state.metrics)
+    show_metrics()
 
     st.divider()
+    st.subheader("Final Grafikler")
+    plot_metrics()
 
+    st.divider()
     st.subheader("Karar Geçmişi")
+
     for item in st.session_state.history:
-        with st.expander(f"{item['tur']}. Tur — {item['başlık']}"):
-            st.write(f"**Karar kodu:** {item['karar']}")
-            st.write(item["özet"])
-            st.write(f"**Puan etkisi:** {item['puan']}")
-            st.write("**Tur sonu metrikleri:**")
-            st.json(item["metrikler"])
+        with st.expander(f"Tur {item['Tur']} — {item['Başlık']}"):
+            st.write(f"**Karar kodu:** {item['Karar']}")
+            st.write(item["Açıklama"])
+            st.write(f"**Puan etkisi:** {item['Puan Etkisi']}")
+
+            comparison_df = pd.DataFrame(
+                {
+                    "Önce": item["Önce"],
+                    "Sonra": item["Sonra"],
+                }
+            )
+            st.dataframe(comparison_df)
 
     st.divider()
-
-    st.subheader("Ekonomik Değerlendirme")
+    st.subheader("Genel Değerlendirme")
     st.markdown(
         """
-- **Faiz artışı**, tek başına her zaman yeterli değildir.
-- **Rezerv kullanımı**, kısa vadeli rahatlama sağlayabilir ama sürdürülebilir olmayabilir.
-- **CDS**, piyasanın risk algısını yansıttığı için güven ve iletişim politikası kritik önemdedir.
-- En etkili yaklaşım genellikle **faiz + likidite/bilanço yönetimi + güven artırıcı iletişim** bileşimidir.
+- **Faiz artışı**, özellikle güven veren iletişimle desteklendiğinde daha etkili olur.
+- **Rezerv kullanımı**, kısa vadeli rahatlama sağlayabilir ancak sürekli kullanımı sürdürülebilir değildir.
+- **CDS**, piyasanın risk algısını yansıttığı için sadece teknik araçlar değil, güven ve beklenti yönetimi de kritik önemdedir.
+- En etkili yaklaşım çoğu zaman **faiz + bilanço/likidite yönetimi + iletişim/güven politikası** bileşimidir.
 """
     )
 
-    col_a, col_b = st.columns(2)
-    with col_a:
+    col1, col2 = st.columns(2)
+    with col1:
         if st.button("🔁 Yeniden Oyna", use_container_width=True):
             reset_game()
             st.rerun()
-    with col_b:
-        st.button("✅ Oyun Tamamlandı", disabled=True, use_container_width=True)
+    with col2:
+        st.button("✅ Oyun Bitti", disabled=True, use_container_width=True)

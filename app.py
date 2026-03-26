@@ -10,6 +10,8 @@ st.set_page_config(
     layout="wide",
 )
 
+WAIT_SECONDS = 60
+
 # --------------------------------------------------
 # OYUN VERİLERİ
 # --------------------------------------------------
@@ -258,7 +260,6 @@ ROUNDS: Dict[int, Dict[str, Any]] = {
     },
 }
 
-WAIT_SECONDS = 60
 
 # --------------------------------------------------
 # STATE
@@ -283,10 +284,10 @@ def init_state() -> None:
         st.session_state.waiting = False
     if "wait_until" not in st.session_state:
         st.session_state.wait_until = None
+    if "pending_result" not in st.session_state:
+        st.session_state.pending_result = None
     if "last_result" not in st.session_state:
         st.session_state.last_result = None
-    if "processed_round" not in st.session_state:
-        st.session_state.processed_round = 0
 
 
 def reset_game() -> None:
@@ -303,34 +304,49 @@ def clamp_metrics() -> None:
     m["Rezerv"] = max(0, m["Rezerv"])
 
 
-def apply_choice(round_no: int, choice_key: str) -> Dict[str, Any]:
+# --------------------------------------------------
+# GAME LOGIC
+# --------------------------------------------------
+def queue_choice(round_no: int, choice_key: str) -> None:
     result = ROUNDS[round_no]["results"][choice_key]
-    effects = result["effects"]
-    metrics = st.session_state.metrics.copy()
-
-    before = metrics.copy()
-
-    for key, delta in effects.items():
-        metrics[key] += delta
-
-    st.session_state.metrics = metrics
-    clamp_metrics()
-    st.session_state.score += result["score"]
-
-    after = st.session_state.metrics.copy()
-
-    history_item = {
+    st.session_state.pending_result = {
         "Tur": round_no,
         "Karar": choice_key,
         "Başlık": result["title"],
         "Açıklama": result["summary"],
         "Puan Etkisi": result["score"],
-        "Önce": before,
-        "Sonra": after,
+        "Etkiler": result["effects"],
+        "Önce": st.session_state.metrics.copy(),
     }
-    st.session_state.history.append(history_item)
-    st.session_state.last_result = history_item
-    return history_item
+    st.session_state.waiting = True
+    st.session_state.wait_until = time.time() + WAIT_SECONDS
+
+
+def finalize_pending_result() -> None:
+    item = st.session_state.pending_result
+    if not item:
+        return
+
+    metrics = st.session_state.metrics.copy()
+    for key, delta in item["Etkiler"].items():
+        metrics[key] += delta
+
+    st.session_state.metrics = metrics
+    clamp_metrics()
+    st.session_state.score += item["Puan Etkisi"]
+
+    item["Sonra"] = st.session_state.metrics.copy()
+    st.session_state.history.append(item)
+    st.session_state.last_result = item
+    st.session_state.pending_result = None
+    st.session_state.waiting = False
+    st.session_state.wait_until = None
+
+    # 5. turdan sonra doğrudan bitir
+    if item["Tur"] < 5:
+        st.session_state.round = item["Tur"] + 1
+    else:
+        st.session_state.round = 6
 
 
 def score_comment(score: int) -> str:
@@ -344,7 +360,7 @@ def score_comment(score: int) -> str:
 
 
 # --------------------------------------------------
-# UI YARDIMCILARI
+# UI HELPERS
 # --------------------------------------------------
 def show_metrics() -> None:
     m = st.session_state.metrics
@@ -361,7 +377,23 @@ def show_metrics() -> None:
 
 def build_history_df() -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
+
+    # başlangıç noktası
+    initial_metrics = {
+        "Tur": 0,
+        "Rezerv": 100,
+        "CDS": 600,
+        "Enflasyon": 45,
+        "Güven": 35,
+        "Kur Baskısı": 80,
+        "Büyüme": 2,
+        "Toplam Puan": 0,
+    }
+    rows.append(initial_metrics)
+
+    total_score = 0
     for item in st.session_state.history:
+        total_score += item["Puan Etkisi"]
         rows.append(
             {
                 "Tur": item["Tur"],
@@ -371,22 +403,10 @@ def build_history_df() -> pd.DataFrame:
                 "Güven": item["Sonra"]["Güven"],
                 "Kur Baskısı": item["Sonra"]["Kur Baskısı"],
                 "Büyüme": item["Sonra"]["Büyüme"],
-                "Toplam Puan": sum(x["Puan Etkisi"] for x in st.session_state.history if x["Tur"] <= item["Tur"]),
+                "Toplam Puan": total_score,
             }
         )
-    if not rows:
-        rows.append(
-            {
-                "Tur": 0,
-                "Rezerv": st.session_state.metrics["Rezerv"],
-                "CDS": st.session_state.metrics["CDS"],
-                "Enflasyon": st.session_state.metrics["Enflasyon"],
-                "Güven": st.session_state.metrics["Güven"],
-                "Kur Baskısı": st.session_state.metrics["Kur Baskısı"],
-                "Büyüme": st.session_state.metrics["Büyüme"],
-                "Toplam Puan": st.session_state.score,
-            }
-        )
+
     return pd.DataFrame(rows)
 
 
@@ -396,7 +416,7 @@ def plot_metrics() -> None:
     fig1, ax1 = plt.subplots(figsize=(8, 4))
     ax1.plot(df["Tur"], df["CDS"], marker="o", label="CDS")
     ax1.plot(df["Tur"], df["Rezerv"], marker="o", label="Rezerv")
-    ax1.set_title("Tur Bazında CDS ve Rezerv")
+    ax1.set_title("CDS ve Rezerv Gelişimi")
     ax1.set_xlabel("Tur")
     ax1.set_ylabel("Seviye")
     ax1.legend()
@@ -407,7 +427,7 @@ def plot_metrics() -> None:
     ax2.plot(df["Tur"], df["Enflasyon"], marker="o", label="Enflasyon")
     ax2.plot(df["Tur"], df["Güven"], marker="o", label="Güven")
     ax2.plot(df["Tur"], df["Kur Baskısı"], marker="o", label="Kur Baskısı")
-    ax2.set_title("Tur Bazında Enflasyon, Güven ve Kur Baskısı")
+    ax2.set_title("Enflasyon, Güven ve Kur Baskısı")
     ax2.set_xlabel("Tur")
     ax2.set_ylabel("Seviye")
     ax2.legend()
@@ -435,12 +455,12 @@ def show_last_result_box() -> None:
             deltas.append(f"- **{key}:** {sign}{change}")
 
     if deltas:
-        st.markdown("**Karar sonrası değişimler:**")
+        st.markdown("**Piyasa yansımaları:**")
         st.markdown("\n".join(deltas))
 
 
 # --------------------------------------------------
-# UYGULAMA
+# APP
 # --------------------------------------------------
 init_state()
 
@@ -460,7 +480,6 @@ with st.sidebar:
     current_round_display = min(st.session_state.round, 5)
     st.write(f"**Mevcut Tur:** {current_round_display}/5")
     st.write(f"**Toplam Puan:** {st.session_state.score}")
-
     if st.button("🔄 Oyunu Sıfırla", use_container_width=True):
         reset_game()
         st.rerun()
@@ -471,44 +490,44 @@ show_metrics()
 st.divider()
 st.subheader("Grafikler")
 plot_metrics()
+st.caption("Grafikler yalnızca piyasa etkileri oluştuktan sonra güncellenir.")
 
 st.divider()
 
 # --------------------------------------------------
-# BEKLEME EKRANI
+# WAITING PHASE
 # --------------------------------------------------
-if st.session_state.waiting:
-    show_last_result_box()
+if st.session_state.waiting and st.session_state.pending_result is not None:
+    pending = st.session_state.pending_result
+    st.info(f"Seçilen karar: **{pending['Başlık']}**")
+    st.write(pending["Açıklama"])
+    st.warning("Kararınızın piyasalarda etkilerinin görülmesi için lütfen bekleyiniz.")
 
     remaining = int(st.session_state.wait_until - time.time())
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
 
-    if remaining > 0:
-        st.warning("Kararınızın piyasalarda etkilerinin görülmesi için lütfen bekleyiniz.")
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
+    while remaining > 0:
+        elapsed = WAIT_SECONDS - remaining
+        progress = int((elapsed / WAIT_SECONDS) * 100)
+        progress_bar.progress(progress)
+        progress_text.markdown(f"### Piyasa yansımaları için kalan süre: **{remaining} saniye**")
+        time.sleep(1)
+        remaining = int(st.session_state.wait_until - time.time())
 
-        total = WAIT_SECONDS
-        while remaining > 0:
-            elapsed = total - remaining
-            progress = int((elapsed / total) * 100)
-            progress_bar.progress(progress)
-            progress_text.markdown(f"### Sonraki tura geçiş için kalan süre: **{remaining} saniye**")
-            time.sleep(1)
-            remaining = int(st.session_state.wait_until - time.time())
-
-        progress_bar.progress(100)
-        progress_text.markdown("### Bekleme süresi tamamlandı.")
-        st.session_state.waiting = False
-        st.rerun()
-
-    else:
-        st.session_state.waiting = False
-        st.rerun()
+    progress_bar.progress(100)
+    progress_text.markdown("### Süre doldu. Piyasa etkileri şimdi işlendi.")
+    finalize_pending_result()
+    st.rerun()
 
 # --------------------------------------------------
-# OYUN AKIŞI
+# ACTIVE GAME
 # --------------------------------------------------
 elif st.session_state.round <= 5:
+    if st.session_state.last_result:
+        show_last_result_box()
+        st.divider()
+
     current_round = st.session_state.round
     round_data = ROUNDS[current_round]
 
@@ -528,18 +547,11 @@ elif st.session_state.round <= 5:
             st.warning("Lütfen bir karar seçin.")
         else:
             choice_key = selected_option[0]
-
-            # Aynı turun tekrar işlenmesini engelle
-            if st.session_state.processed_round < current_round:
-                apply_choice(current_round, choice_key)
-                st.session_state.processed_round = current_round
-                st.session_state.waiting = True
-                st.session_state.wait_until = time.time() + WAIT_SECONDS
-                st.session_state.round += 1
-                st.rerun()
+            queue_choice(current_round, choice_key)
+            st.rerun()
 
 # --------------------------------------------------
-# SONUÇ EKRANI
+# GAME OVER
 # --------------------------------------------------
 else:
     if st.session_state.last_result:
@@ -558,13 +570,11 @@ else:
 
     st.divider()
     st.subheader("Karar Geçmişi")
-
     for item in st.session_state.history:
         with st.expander(f"Tur {item['Tur']} — {item['Başlık']}"):
             st.write(f"**Karar kodu:** {item['Karar']}")
             st.write(item["Açıklama"])
             st.write(f"**Puan etkisi:** {item['Puan Etkisi']}")
-
             comparison_df = pd.DataFrame(
                 {
                     "Önce": item["Önce"],
